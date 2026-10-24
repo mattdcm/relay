@@ -17,6 +17,12 @@ final class ZoomHover {
     private var panelButton = CGRect.null                  // button the panel is open for
     private var panelRect = CGRect.null                    // the panel, origin at the top left
     private var outsideSince: Date?
+    /// The window and the zones the panel is open for, and digits typed so far.
+    private var target: (window: AXUIElement, zones: [CGRect])?
+    private var typedNumber = 0
+    private var typingTimer: Timer?
+
+    var isShowing: Bool { panel != nil }
 
     private let delay: TimeInterval = 0.5       // time resting on the button before showing
     private let hideDelay: TimeInterval = 0.8   // time outside the button and the panel before hiding
@@ -122,6 +128,7 @@ final class ZoomHover {
             title = "No Relay layout for this screen. Quick positions:"
         }
 
+        target = (window, zones)
         let strip = ZoneStrip(zones: zones, screen: display.frame)
         strip.onPick = { [weak self] rect in
             self?.hide()
@@ -182,7 +189,35 @@ final class ZoomHover {
         return origin
     }
 
+    /// A digit typed while the panel is shown: moves the window to the zone
+    /// with that number. With 10 zones or more, waits a moment for a second
+    /// digit (to type 10, 11…) unless no longer number exists.
+    func typed(_ digit: Int) {
+        guard let target else { return }
+        typingTimer?.invalidate()
+        typedNumber = typedNumber * 10 + digit
+        let number = typedNumber
+        if number * 10 > target.zones.count {
+            pick(number)
+        } else {
+            typingTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak self] _ in self?.pick(number) }
+        }
+    }
+
+    private func pick(_ number: Int) {
+        typingTimer?.invalidate()
+        typingTimer = nil
+        typedNumber = 0
+        guard let target, number >= 1, number <= target.zones.count else { return }
+        hide()
+        WindowList.setFrame(target.window, target.zones[number - 1])
+    }
+
     private func hide() {
+        target = nil
+        typedNumber = 0
+        typingTimer?.invalidate()
+        typingTimer = nil
         panel?.orderOut(nil)
         panel = nil
         panelButton = .null

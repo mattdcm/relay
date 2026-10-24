@@ -2,6 +2,39 @@
 
 All notable changes to Relay are listed here. Versions follow [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`. Each version is published as a GitHub release tagged `vX.Y.Z`; Relay compares that tag with its own version to tell you an update is available.
 
+## [1.1.0] - 2026-10-24
+
+### Added
+
+- Zone mode: during ⌘⇥, keep holding ⌘ and use the arrow keys to move the selected window from zone to zone (on any screen), live, with the zones shown on screen. Release ⌘ to keep it, Esc to put it back. Press ⇥ (still holding ⌘) to keep it and pick another window to place.
+- The ⌘⇥ switcher shows, under the windows, the keys to place a window in a zone (⌘ and the four arrow keys) next to the keys to pick another window (⌘ ⇥), drawn as keycaps.
+- Left of these keys, a map of all the screens shows the numbered zones of the current layout, with the name of the monitor the selected window is on ("Window position in monitor …"), and highlights the zone that window is in while you move through the list. A small screen keeps a readable size next to a big one.
+- Option "Move Pointer to the Chosen Window" (off by default): after a switch, the pointer goes to the center of the chosen window.
+
+### Changed
+
+- The layout editor shows all the screens of the setup side by side, arranged as they are on the desk and at the same scale (a big monitor looks bigger than the laptop screen, while a small screen keeps a minimum size and a big one a maximum size, so that both stay easy to edit), each with its name. Windows can be dropped onto a zone of any screen directly (the screen menu is gone).
+- In the layout editor, drag a screen by its name to the side of another one: on Save, macOS arranges the screens that way (as in System Settings > Displays > Arrange), then the windows are placed. Side by side, screens are aligned at the bottom; stacked, they are centered.
+- With previews turned on, the editor's window list shows each window's thumbnail, with its icon and title on top. Windows not placed yet are listed first.
+- In the layout editor, hovering a window name inside a zone shows a ✕ that takes the window out of that zone.
+- "Delete Zone" in the layout editor: the zone with the previous number (or the nearest one that fits) grows over the deleted zone and takes its windows.
+- With several screens, a ⇅ button at the top right of each screen in the editor swaps its zones and windows with another screen (a menu picks the screen when there are more than two).
+- The layout editor window can be resized; the screens grow with it.
+- App icon: a coffee cup.
+- While the green-button strip is shown, typing a zone number moves the window there (with 10 zones or more, Relay waits a moment for a second digit).
+
+### Changed
+
+- Resizing a window that fills a zone resizes the zone: the lines it shares with neighbouring zones move, the windows in those zones follow live while the mouse moves, and the layout is saved when the button is released. Can be turned off in the menu ("Resizing a Window Resizes Its Zone").
+- Dragging a window by its title bar shows the zones (no need to hold ⇧ anymore). Dropping it over the central half of a zone (dashed outline) fits it to the zone; dropping it anywhere else just moves it, as usual. Can be turned off in the menu ("Dragging a Window Suggests the Layout Zones").
+- During ⌘⇥, the arrow keys now move the selected window from zone to zone; ⇥ and ⇧⇥ move through the list.
+- During ⌘⇥, typing a zone number (⌘ still held) moves the selected window straight to that zone of its screen.
+- Spotlight (⌘Space) also finds Relay with words such as coffee, awake, window, screen, monitor or zones.
+
+### Security
+
+- Layout names are limited to 30 characters of plain text on one line (control characters are removed, also when the layouts file is edited by hand). They are only shown as text and saved as JSON strings, never run or passed to a shell.
+
 ## [1.0.0] - 2026-10-24
 
 First public version.
@@ -54,4 +87,5 @@ First public version.
 - **Screen content.** Only `Sources/Previews.swift` reads the screen, only when previews are on. Thumbnails stay in memory and are never written to disk or sent anywhere.
 - **No usage history.** When apps were last used is kept in memory only and forgotten when Relay quits.
 
+[1.1.0]: https://github.com/mattdcm/relay/releases/tag/v1.1.0
 [1.0.0]: https://github.com/mattdcm/relay/releases/tag/v1.0.0

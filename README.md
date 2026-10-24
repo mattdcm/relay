@@ -2,9 +2,9 @@
 
 A small macOS menu-bar app that combines:
 
-- **A window switcher**: hold ⌘ (Command) and press ⇥ (Tab) to cycle through windows, then release ⌘ to switch. It replaces the macOS app switcher. ⇧ or ← → go back, Esc cancels, and a click picks a window. Tab only cycles through recently used apps (the delay is set in the menu, from 5 min to 24 h, or no limit). Tab always covers at least the current app and the previous one. Other windows are still shown, dimmed, and can be picked with the mouse.
+- **A window switcher**: hold ⌘ (Command) and press ⇥ (Tab) to cycle through windows, then release ⌘ to switch. It replaces the macOS app switcher. ⇧⇥ goes back, Esc cancels, and a click picks a window. Tab only cycles through recently used apps (the delay is set in the menu, from 5 min to 24 h, or no limit). Tab always covers at least the current app and the previous one. Other windows are still shown, dimmed, and can be picked with the mouse. While the switcher is open, keep holding ⌘ and press the arrow keys: the zones of the current layout appear on every screen and the selected window jumps from zone to zone in that direction, live. Release ⌘ to keep it there, or press Esc to put it back where it was.
 - **Keep awake**: from the cup icon, prevent sleep, indefinitely or for 15 min, 1 h, 2 h or 5 h.
-- **Productive windows**: named layouts that split each screen into zones and place windows in each zone. Applying a layout opens the apps if needed and moves their windows into place. Each layout belongs to a screen setup (which screens are connected); when you plug or unplug a screen, Relay reapplies the last layout used with the new setup. Hold ⇧ while dragging a window by its title bar to see the zones and drop it into one. You can also rest the pointer on a window's green button: a strip titled "Your current Relay layout" appears below Apple's menu (or to its right, or above the button, when space is short), and a click moves the window into that zone. Without a layout for the current screens, the strip offers halves, thirds and full screen. ⌃⌥1 to ⌃⌥9 apply the layouts of the current setup.
+- **Productive windows**: named layouts that split each screen into zones and place windows in each zone. Applying a layout opens the apps if needed and moves their windows into place. Each layout belongs to a screen setup (which screens are connected); when you plug or unplug a screen, Relay reapplies the last layout used with the new setup. Drag a window by its title bar to see the zones: drop it over the central half of a zone (dashed outline) to fit it there, or anywhere else to just move it. You can also rest the pointer on a window's green button: a strip titled "Your current Relay layout" appears below Apple's menu (or to its right, or above the button, when space is short), and a click moves the window into that zone. Without a layout for the current screens, the strip offers halves, thirds and full screen. ⌃⌥1 to ⌃⌥9 apply the layouts of the current setup.
 
 No ads, no account, no tracking. The only network access is a weekly update check against this project's GitHub releases, which you can turn off. About 1,700 lines of Swift, no dependencies.
 
@@ -76,7 +76,9 @@ Each file does one thing:
 | `Sources/Layouts.swift` | Zones, layouts, screen setups, and saving them to `~/Library/Application Support/Relay/layouts.json` | No |
 | `Sources/Arranger.swift` | Applies a layout: opens apps and moves their windows (Accessibility API) | No |
 | `Sources/ZoneEditor.swift` | The layout editor window | No |
-| `Sources/Snapper.swift` | ⇧ + drag to snap a window. Only watches mouse clicks and drags, never blocks them | No |
+| `Sources/ZoneMover.swift` | Arrows during ⌘⇥: moves the selected window from zone to zone (Accessibility API) | No |
+| `Sources/Snapper.swift` | Drag a window by its title bar to snap it into a zone. Only watches mouse clicks and drags, never blocks them | No |
+| `Sources/ZoneResizer.swift` | A window resized by hand in a zone moves the zone's lines and the neighbouring windows (Accessibility API) | No |
 | `Sources/ZoomHover.swift` | Zone strip next to the green button. Reads the pointer position and, via Accessibility, which button is under it | No |
 | `Sources/Updates.swift` | Weekly update check: one read-only request to the GitHub API. **The only network code** | No |
 | `Sources/Previews.swift` | Thumbnails (ScreenCaptureKit), kept in memory while Relay runs, never written to disk | **Yes, and it is the only one**, when previews are on |

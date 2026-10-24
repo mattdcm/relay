@@ -9,7 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let activity = Activity()
     private let layouts = LayoutStore()
     private let snapper = Snapper()
+    private let zoneResizer = ZoneResizer()
     private let zoomHover = ZoomHover()
+    private let zoneMover = ZoneMover()
     private let updates = Updates()
     private var setup = Displays.setupKey()
     private var statusItem: NSStatusItem!
@@ -17,6 +19,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Previews are off by default: without them, no Screen Recording
     /// permission is requested.
+    /// Off by default: after a switch, the pointer goes to the chosen window.
+    private var pointerFollows: Bool {
+        get { UserDefaults.standard.bool(forKey: "pointerFollows") }
+        set { UserDefaults.standard.set(newValue, forKey: "pointerFollows") }
+    }
+
+    /// Puts the pointer at the center of the window, once it is in front.
+    private func movePointer(to item: WindowItem) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            let frame: CGRect
+            if let own = item.own {
+                let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+                frame = CGRect(x: own.frame.minX, y: primaryHeight - own.frame.maxY, width: own.frame.width, height: own.frame.height)
+            } else {
+                frame = WindowList.frame(of: item.element)
+            }
+            guard frame.width > 0, frame.height > 0 else { return }
+            CGWarpMouseCursorPosition(CGPoint(x: frame.midX, y: frame.midY))
+        }
+    }
+
     private var previewsEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "previews") }
         set { UserDefaults.standard.set(newValue, forKey: "previews") }
@@ -36,7 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         hotkey.onNext = { [weak self] backwards in
             guard let self else { return }
-            if self.switcher.isVisible {
+            if self.zoneMover.isActive {
+                // ⇥ after placing a window: keep it there and pick another one.
+                self.zoneMover.commit()
+                self.switcher.showPanel()
+                self.switcher.move(backwards: backwards)
+            } else if self.switcher.isVisible {
                 self.switcher.move(backwards: backwards)
             } else {
                 let interval = self.recentMinutes > 0 ? TimeInterval(self.recentMinutes * 60) : nil
@@ -45,8 +73,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         }
-        hotkey.onRelease = { [weak self] in self?.switcher.commit() }
-        hotkey.onCancel = { [weak self] in self?.switcher.cancel() }
+        hotkey.onRelease = { [weak self] in
+            guard let self else { return }
+            let chosen = self.switcher.selectedItem
+            defer { if self.pointerFollows, let chosen { self.movePointer(to: chosen) } }
+            if self.zoneMover.isActive {
+                // The window is already in its zone and in front.
+                self.zoneMover.commit()
+                self.switcher.cancel()
+            } else {
+                self.switcher.commit()
+            }
+        }
+        hotkey.onCancel = { [weak self] in
+            self?.zoneMover.cancel()
+            self?.switcher.cancel()
+        }
+        hotkey.onZone = { [weak self] direction in
+            guard let self, self.startZoneMode() else { return }
+            self.zoneMover.move(direction)
+        }
+        hotkey.onZoneNumber = { [weak self] digit in
+            guard let self, self.startZoneMode() else { return }
+            self.zoneMover.typed(digit)
+        }
         hotkey.onLayout = { [weak self] index in
             guard let self else { return }
             let list = self.layouts.layouts(for: self.setup)
@@ -56,12 +106,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return nil }
             return self.layouts.lastApplied(for: self.setup)
         }
+        snapper.onResizing = { [weak self] window, before in
+            guard let self, let layout = self.layouts.lastApplied(for: self.setup) else { return }
+            self.zoneResizer.update(window, from: before, layout: layout)
+        }
+        snapper.onResize = { [weak self] window, before, after in
+            guard let self, let layout = self.layouts.lastApplied(for: self.setup) else { return }
+            if let changed = self.zoneResizer.finish(window, from: before, to: after, layout: layout) {
+                self.layouts.save(changed)
+            }
+        }
+        snapper.onNoResize = { [weak self] in self?.zoneResizer.cancel() }
+        switcher.zoneScreens = { [weak self] in
+            guard let self else { return [] }
+            let layout = self.layouts.lastApplied(for: self.setup) ?? self.layouts.layouts(for: self.setup).first
+            return Displays.current().map { (frame: $0.frame, zones: ZoneMover.zones(on: $0, layout: layout), name: $0.name) }
+        }
+        hotkey.wantsDigits = { [weak self] in self?.zoomHover.isShowing ?? false }
+        hotkey.onDigit = { [weak self] digit in self?.zoomHover.typed(digit) }
         zoomHover.currentLayout = { [weak self] in
             guard let self else { return nil }
             return self.layouts.lastApplied(for: self.setup) ?? self.layouts.layouts(for: self.setup).first
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
-                                               object: nil, queue: .main) { [weak self] _ in self?.screensChanged() }
+                                               object: nil, queue: .main) { [weak self] _ in
+            self?.screensChanged()
+            // macOS can report a new screen before it is fully set up: check again.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.screensChanged() }
+        }
 
         // Ask for the Accessibility permission if needed, then wait until it is granted.
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -126,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.sectionHeader(title: "Window Switch"))
         if AXIsProcessTrusted() {
             menu.addItem(info("Switch windows: ⌘⇥"))
+            menu.addItem(info("Move it to a zone: ⌘⇥, then arrows (⌘ held)"))
         } else {
             menu.addItem(item("⚠️ Allow Accessibility…") {
                 NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
@@ -144,6 +217,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let recentItem = NSMenuItem(title: "Recent apps for ⌘⇥: \(current)", action: nil, keyEquivalent: "")
         recentItem.submenu = recents
         menu.addItem(recentItem)
+        menu.addItem(item("Move Pointer to the Chosen Window", checked: pointerFollows) { [weak self] in
+            self?.pointerFollows.toggle()
+        })
         menu.addItem(item("Show Window Previews", checked: previewsEnabled) { [weak self] in
             guard let self else { return }
             self.previewsEnabled.toggle()
@@ -194,6 +270,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Layouts
 
     private func fillLayouts(_ menu: NSMenu) {
+        // In case a screen change was missed, check the screens again.
+        screensChanged()
         let names = Displays.current().map(\.name).joined(separator: " + ")
         menu.addItem(info("Screens: \(names)"))
         let last = layouts.lastApplied(for: setup)?.id
@@ -212,7 +290,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("Auto-apply on screen change", checked: layouts.autoApply) { [weak self] in
             self?.layouts.autoApply.toggle()
         })
-        menu.addItem(info("Hold ⇧ while dragging a window to snap it"))
+        menu.addItem(item("Dragging a Window Suggests the Layout Zones", checked: snapper.isEnabled) { [weak self] in
+            self?.snapper.isEnabled.toggle()
+        })
+        menu.addItem(item("Resizing a Window Resizes Its Zone", checked: ZoneResizer.isEnabled) {
+            ZoneResizer.isEnabled.toggle()
+        })
         menu.addItem(item("Zones on Green Button Hover", checked: zoomHover.isEnabled) { [weak self] in
             self?.zoomHover.isEnabled.toggle()
         })
@@ -261,11 +344,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func edit(_ layout: Layout) {
-        ZoneEditor.open(layout) { [weak self] edited in
+        ZoneEditor.open(layout, previews: previewsEnabled && Previews.isAllowed) { [weak self] edited in
             self?.layouts.save(edited)
             // Once the editor has closed, so that its window is out of the way.
             DispatchQueue.main.async { self?.apply(edited) }
         }
+    }
+
+    /// Zone mode of the switcher, with the window selected in it. Returns
+    /// false if there is no window to move.
+    private func startZoneMode() -> Bool {
+        if zoneMover.isActive { return true }
+        guard let item = switcher.selectedItem, item.own == nil else { return false }
+        switcher.hidePanel()
+        zoneMover.start(item, layout: layouts.lastApplied(for: setup) ?? layouts.layouts(for: setup).first)
+        return true
     }
 
     /// Screen plugged in or unplugged: reapply the last layout of the new setup,
@@ -282,6 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.messageText = title
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.formatter = LayoutNameFormatter()
         field.stringValue = value
         alert.accessoryView = field
         alert.addButton(withTitle: "OK")
@@ -289,7 +383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate()
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        let name = Layout.cleanName(field.stringValue)
         return name.isEmpty ? nil : name
     }
 

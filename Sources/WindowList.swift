@@ -116,6 +116,12 @@ enum WindowList {
         }
     }
 
+    /// Moves and resizes a window at once, without the checks of setFrame:
+    /// for live changes that are repeated while the mouse moves.
+    static func setFrameNow(_ window: AXUIElement, _ rect: CGRect) {
+        apply(rect, to: window)
+    }
+
     /// Size, position, size, then position again: macOS limits the size to the
     /// screen the window is on, and changing the size can shift the window
     /// when it moves from one screen to another.
@@ -130,8 +136,13 @@ enum WindowList {
 
     /// The window in front.
     static func focusedWindow() -> AXUIElement? {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
-        return attribute(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedWindowAttribute)
+        // Never Relay itself: it cannot answer its own Accessibility requests
+        // while it is busy asking.
+        guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else { return nil }
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        // Called on each click: an app that does not respond must not block Relay.
+        AXUIElementSetMessagingTimeout(element, 0.3)
+        return attribute(element, kAXFocusedWindowAttribute)
     }
 
     // MARK: - Details

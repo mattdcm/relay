@@ -99,7 +99,7 @@ struct Layout: Codable {
 
     init(name: String, setup: String, screens: [String: [Zone]],
          screenNames: [String: String], screenSizes: [String: CGSize]) {
-        self.name = name
+        self.name = Layout.cleanName(name)
         self.setup = setup
         self.screens = screens
         self.screenNames = screenNames
@@ -111,7 +111,8 @@ struct Layout: Codable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
-        name = try values.decode(String.self, forKey: .name)
+        // The file can be edited by hand: the name is cleaned as when typed.
+        name = Layout.cleanName(try values.decode(String.self, forKey: .name))
         setup = try values.decode(String.self, forKey: .setup)
         screenNames = try values.decode([String: String].self, forKey: .screenNames)
         screenSizes = try values.decode([String: CGSize].self, forKey: .screenSizes)
@@ -123,10 +124,40 @@ struct Layout: Codable {
     }
 }
 
+extension Layout {
+    static let maxNameLength = 30
+
+    /// A layout name as stored and shown: plain text on one line, at most 30
+    /// characters. Names are only ever shown as text and saved as JSON
+    /// strings, never run or interpreted, so they cannot inject code.
+    static func cleanName(_ name: String) -> String {
+        let scalars = name.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
+        let text = String(String.UnicodeScalarView(scalars)).trimmingCharacters(in: .whitespaces)
+        return String(text.prefix(maxNameLength))
+    }
+}
+
+/// Text fields for layout names: refuses typing beyond 30 characters.
+final class LayoutNameFormatter: Formatter {
+    override func string(for object: Any?) -> String? { object as? String }
+
+    override func getObjectValue(_ object: AutoreleasingUnsafeMutablePointer<AnyObject?>?, for string: String,
+                                 errorDescription error: AutoreleasingUnsafeMutablePointer<NSString?>?) -> Bool {
+        object?.pointee = string as NSString
+        return true
+    }
+
+    override func isPartialStringValid(_ partial: String, newEditingString: AutoreleasingUnsafeMutablePointer<NSString?>?,
+                                       errorDescription error: AutoreleasingUnsafeMutablePointer<NSString?>?) -> Bool {
+        partial.count <= Layout.maxNameLength && !partial.unicodeScalars.contains { CharacterSet.newlines.contains($0) }
+    }
+}
+
 /// A connected screen.
 struct Display {
     let id: String       // stable identifier provided by macOS
     let name: String
+    let number: CGDirectDisplayID   // changes from one session to the next
     let frame: CGRect    // usable area (without menu bar or Dock), origin at the top left
 }
 
@@ -138,7 +169,7 @@ enum Displays {
                   let uuid = CGDisplayCreateUUIDFromDisplayID(number)?.takeRetainedValue()
             else { return nil }
             let visible = screen.visibleFrame
-            return Display(id: (CFUUIDCreateString(nil, uuid) as String?) ?? "", name: screen.localizedName,
+            return Display(id: (CFUUIDCreateString(nil, uuid) as String?) ?? "", name: screen.localizedName, number: number,
                            frame: CGRect(x: visible.minX, y: primaryHeight - visible.maxY,
                                          width: visible.width, height: visible.height))
         }
@@ -147,6 +178,46 @@ enum Displays {
     /// Identifies a setup: the set of connected screens.
     static func setupKey(_ displays: [Display] = current()) -> String {
         displays.map(\.id).sorted().joined(separator: "+")
+    }
+
+    /// Places the screens next to each other in this order, from left to
+    /// right (or top to bottom), as System Settings > Displays > Arrange does.
+    /// Side by side, their bottoms are aligned; stacked, they are centered.
+    /// Only done when the user moves a screen in the layout editor.
+    /// Returns false when nothing changed.
+    @discardableResult
+    static func arrange(_ order: [String], horizontal: Bool) -> Bool {
+        let displays = current()
+        let numbers: [CGDirectDisplayID] = order.compactMap { id in displays.first { $0.id == id }?.number }
+        guard numbers.count == displays.count, numbers.count > 1,
+              let main = numbers.firstIndex(of: CGMainDisplayID())
+        else { return false }
+        let sizes: [CGSize] = numbers.map { CGDisplayBounds($0).size }
+        let maxWidth: CGFloat = sizes.map(\.width).max() ?? 0
+        let maxHeight: CGFloat = sizes.map(\.height).max() ?? 0
+        var origins: [CGPoint] = []
+        var cursor: CGFloat = 0
+        for size in sizes {
+            if horizontal {
+                origins.append(CGPoint(x: cursor, y: maxHeight - size.height))
+                cursor += size.width
+            } else {
+                origins.append(CGPoint(x: ((maxWidth - size.width) / 2).rounded(), y: cursor))
+                cursor += size.height
+            }
+        }
+        // The main screen (the one with the menu bar) stays at the origin.
+        let shift: CGPoint = origins[main]
+        let wanted: [CGPoint] = origins.map { CGPoint(x: $0.x - shift.x, y: $0.y - shift.y) }
+        var unchanged = true
+        for (number, origin) in zip(numbers, wanted) where CGDisplayBounds(number).origin != origin { unchanged = false }
+        if unchanged { return false }
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success, let config else { return false }
+        for (number, origin) in zip(numbers, wanted) {
+            CGConfigureDisplayOrigin(config, number, Int32(origin.x), Int32(origin.y))
+        }
+        return CGCompleteDisplayConfiguration(config, .permanently) == .success
     }
 
     /// Converts a "top-left origin" rectangle to AppKit coordinates.

@@ -20,6 +20,8 @@ swiftc -O -swift-version 5 \
     Sources/*.swift \
     -o "$APP/Contents/MacOS/Relay"
 cp Info.plist "$APP/Contents/Info.plist"
+mkdir -p "$APP/Contents/Resources"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # 2. Signing keychain and certificate, created only once.
 # macOS ties permissions (Accessibility…) to the signature: with a fixed
@@ -104,9 +106,25 @@ codesign --verify --strict "$APP"
 
 # 4. Install and launch
 pkill -x Relay || true
-pkill -x Relais || true          # ancien nom de l'app
+pkill -x Relais || true          # former name of the app
 sleep 1
 rm -rf /Applications/Relay.app /Applications/Relais.app
 mv "$APP" /Applications/
+# Words that find Relay in Spotlight (⌘Space), besides its name. Stored as
+# Spotlight metadata on the installed app, outside the signed content.
+KEYWORDS="coffee cup awake sleep window windows switcher screen screens monitor zones layout"
+TMP=$(mktemp -d)
+{
+    echo '<plist version="1.0"><array>'
+    for WORD in $KEYWORDS; do echo "<string>$WORD</string>"; done
+    echo '</array></plist>'
+} > "$TMP/keywords.plist"
+echo "<plist version=\"1.0\"><string>Window switcher, keep awake (coffee), screen zones: $KEYWORDS</string></plist>" > "$TMP/comment.plist"
+for NAME in keywords comment; do plutil -convert binary1 "$TMP/$NAME.plist"; done
+xattr -wx com.apple.metadata:kMDItemKeywords "$(xxd -p "$TMP/keywords.plist" | tr -d '\n')" /Applications/Relay.app || true
+xattr -wx com.apple.metadata:kMDItemFinderComment "$(xxd -p "$TMP/comment.plist" | tr -d '\n')" /Applications/Relay.app || true
+rm -rf "$TMP"
+mdimport /Applications/Relay.app 2>/dev/null || true
+
 open /Applications/Relay.app
 echo "OK: Relay is installed and running."

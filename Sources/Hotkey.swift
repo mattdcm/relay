@@ -10,6 +10,12 @@ final class Hotkey {
     var onRelease: () -> Void = {}                       // ⌘ released: confirm
     var onCancel: () -> Void = {}                        // Esc: cancel
     var onLayout: (_ index: Int) -> Void = { _ in }      // ⌃⌥1 to ⌃⌥9: apply a layout
+    var onZone: (_ direction: ZoneMover.Direction) -> Void = { _ in }   // arrows during ⌘⇥: move to a zone
+    /// Digits typed while the green-button strip is shown: zone numbers.
+    var wantsDigits: () -> Bool = { false }
+    /// Digits typed during ⌘⇥: number of the zone to move the selected window to.
+    var onZoneNumber: (_ digit: Int) -> Void = { _ in }
+    var onDigit: (_ digit: Int) -> Void = { _ in }
 
     /// Key to hold. Set to `.maskAlternate` to go back to ⌥⇥.
     static let modifier: CGEventFlags = .maskCommand
@@ -19,7 +25,10 @@ final class Hotkey {
 
     private enum Key {
         static let tab: Int64 = 48, escape: Int64 = 53, left: Int64 = 123, right: Int64 = 124
+        static let down: Int64 = 125, up: Int64 = 126
         static let digits: [Int64] = [18, 19, 20, 21, 23, 22, 26, 28, 25]   // keys 1 to 9
+        static let allDigits: [Int64] = [29] + digits                      // keys 0 to 9
+        static let keypad: [Int64] = [82, 83, 84, 85, 86, 87, 88, 89, 91, 92]   // keypad 0 to 9
     }
 
     /// Returns false if macOS refuses (Accessibility permission missing).
@@ -72,15 +81,28 @@ final class Hotkey {
             onLayout(index)
             return true
         }
-        guard active else { return false }
-        if type == .keyDown {
-            switch key {
-            case Key.escape: active = false; onCancel()
-            case Key.left: onNext(true)
-            case Key.right: onNext(false)
-            default: return false
-            }
+        // A digit without modifier while the green-button strip is shown.
+        if !active, flags.intersection([.maskCommand, .maskAlternate, .maskControl, .maskShift]).isEmpty,
+           let digit = Key.allDigits.firstIndex(of: key) ?? Key.keypad.firstIndex(of: key), wantsDigits() {
+            if type == .keyDown { onDigit(digit) }
+            return true
         }
-        return [Key.escape, Key.left, Key.right].contains(key)
+        guard active else { return false }
+        // ⌘ + a digit: move the selected window to the zone with that number.
+        if let digit = Key.allDigits.firstIndex(of: key) ?? Key.keypad.firstIndex(of: key) {
+            if type == .keyDown { onZoneNumber(digit) }
+            return true
+        }
+        // Arrows (with or without ⌥): move the selected window from zone to zone.
+        let arrows: [Int64: ZoneMover.Direction] = [Key.left: .left, Key.right: .right, Key.up: .up, Key.down: .down]
+        if let direction = arrows[key] {
+            if type == .keyDown { onZone(direction) }
+            return true
+        }
+        if type == .keyDown, key == Key.escape {
+            active = false
+            onCancel()
+        }
+        return key == Key.escape
     }
 }
