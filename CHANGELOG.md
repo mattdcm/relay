@@ -1,0 +1,57 @@
+# Changelog
+
+All notable changes to Relay are listed here. Versions follow [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`. Each version is published as a GitHub release tagged `vX.Y.Z`; Relay compares that tag with its own version to tell you an update is available.
+
+## [1.0.0] - 2026-10-24
+
+First public version.
+
+### Window switcher
+
+- Hold ⌘ and press ⇥ to cycle through windows, release ⌘ to switch. Replaces the macOS app switcher.
+- ⇧⇥ or ← go back, → goes forward, Esc cancels, a click picks a window.
+- The first press selects the previous window.
+- ⇥ only cycles through recently used apps (5 min to 24 h, or no limit, set in the menu). It always covers at least the current app and the previous one. Other windows are shown dimmed and can be picked with the mouse.
+- Shows windows of the current Space, plus minimized windows and windows of hidden apps.
+- Optional window previews (off by default, needs Screen Recording). Without them, the switcher shows the app icon and the window title.
+
+### Keep awake
+
+- Prevent display and system sleep indefinitely, or for 15 min, 1 h, 2 h or 5 h.
+- Uses the official macOS power assertion. The menu-bar cup fills while active.
+
+### Productive Windows
+
+- Named layouts that split each screen into zones, with windows placed in each zone.
+- Zone editor: split any zone left | right or top / bottom, drag lines to resize, merge zones, drag open windows from a list onto zones (one zone per window; placed windows stay listed, dimmed, with their zone number, and can be removed) (window names in zones are cut after 10 characters). Apps that are not open are launched when the layout is applied.
+- Zones are numbered in reading order, the same in the editor and in the green-button strip.
+- Saving a layout moves the windows into place right away.
+- Multiple selection in the editor (⇧-click or ⌘-click): merge several zones at once, cut them with one common line, drag the line they share in one move.
+- Applying a layout opens its apps if needed and moves their windows into their zones (windows are matched by app and title).
+- Layouts belong to a screen setup. When a screen is plugged in or unplugged, Relay reapplies the last layout used with the new setup (can be turned off).
+- ⌃⌥1 to ⌃⌥9 apply the layouts of the current setup.
+- Hold ⇧ while dragging a window by its title bar to show the zones and drop it into one.
+- Rest the pointer on a window's green button to show a strip titled "Your current Relay layout" with the layout's numbered zones, below Apple's menu (or to its right, or above the button, when space is short); a click moves the window into that zone (halves, thirds and full screen when no layout exists for the current screens). Apple's own green-button menu is left untouched (can be turned off).
+- Layouts are saved in a readable file: `~/Library/Application Support/Relay/layouts.json`.
+
+### General
+
+- Menu-bar only (no Dock icon), English interface. The layout editor appears in the ⌘⇥ switcher like any other window.
+- Open at Login option.
+- "Support Relay" menu item (€ icon), which opens the developer's donation page in the browser.
+- Weekly update check against this project's GitHub releases (can be turned off). When a new version is out, a red dot appears on the menu-bar icon, with "Install Update…" and "What's New…" in the menu. Installing opens a script in Terminal that downloads that version's source from GitHub and runs build.sh; Relay itself never downloads anything in the background.
+- build.sh explains why it asks for a password, suggests a memorable one or a password manager, and reminds that typing is invisible in Terminal.
+- Built from source with `sh build.sh`, using only Apple's command-line tools. No dependencies.
+
+### Security
+
+- **Hardened runtime.** Relay is signed with `--options runtime`, so macOS refuses to load injected code into it (`DYLD_INSERT_LIBRARIES`, unsigned libraries). Another app cannot run its own code inside Relay to borrow its permissions.
+- **Signing key protected by a password.** The self-signed "Relais Local" key lives in a dedicated keychain (`relay-signing.keychain-db`), locked with its own password. It is unlocked only while `build.sh` signs, then locked again (and automatically after 5 minutes or on sleep). Other programs cannot sign themselves as Relay and silently inherit its Accessibility and Screen Recording permissions. Earlier unreleased builds kept the key in the login keychain, usable without a password; `build.sh` deletes that old key.
+- **Certificate limited to code signing.** The certificate is not a trusted root (CA:false, code-signing usage only), so it cannot be used to impersonate websites or intercept traffic.
+- **Minimal network use.** The update check is the only network code (`Sources/Updates.swift`): one read-only request to the GitHub API per week, ephemeral session (no cookies, no disk cache), no data sent, and only links to this project's github.com page are opened. The release tag is accepted only if it is a plain version number, since it is used in the install script.
+- **No other entry points.** No URL scheme, XPC service, AppleScript dictionary or document types. Other apps cannot ask Relay to do anything.
+- **Keyboard and mouse.** The ⌘⇥ interception only reads key codes and modifier keys and records nothing. The snap feature only listens to mouse clicks and drags. macOS disables both while you type a password.
+- **Screen content.** Only `Sources/Previews.swift` reads the screen, only when previews are on. Thumbnails stay in memory and are never written to disk or sent anywhere.
+- **No usage history.** When apps were last used is kept in memory only and forgotten when Relay quits.
+
+[1.0.0]: https://github.com/mattdcm/relay/releases/tag/v1.0.0
