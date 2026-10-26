@@ -1,7 +1,7 @@
 import AppKit
 
 /// Mouse snapping: when you drag a window by its title bar, the zones of the
-/// current layout appear. Released over the central half of a zone, the
+/// current layout appear. Released over the central quarter of a zone, the
 /// window takes the place of that zone; released anywhere else, it simply
 /// stays where macOS moved it.
 /// Also notices when a window is resized with the mouse (see ZoneResizer).
@@ -30,9 +30,9 @@ final class Snapper {
         set { UserDefaults.standard.set(newValue, forKey: "dragZones"); if !newValue { hideOverlays() } }
     }
 
-    /// The central part of a zone, half of its area, where a drop snaps.
+    /// The central part of a zone, a quarter of its area, where a drop snaps.
     static func center(of zone: CGRect) -> CGRect {
-        let side: CGFloat = 0.5.squareRoot()
+        let side: CGFloat = 0.25.squareRoot()
         return zone.insetBy(dx: zone.width * (1 - side) / 2, dy: zone.height * (1 - side) / 2)
     }
 
@@ -155,7 +155,7 @@ final class ZoneOverlayView: NSView {
     var origin = CGPoint.zero            // screen corner, to convert to local coordinates
     var zones: [CGRect] = []
     var highlighted: CGRect? { didSet { needsDisplay = true } }
-    /// Draws the central half of each zone, where a dragged window snaps.
+    /// Draws the central quarter of each zone, where a dragged window snaps.
     var showsCenters = false
 
     override var isFlipped: Bool { true }

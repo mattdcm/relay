@@ -2,6 +2,25 @@
 
 All notable changes to Relay are listed here. Versions follow [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`. Each version is published as a GitHub release tagged `vX.Y.Z`; Relay compares that tag with its own version to tell you an update is available.
 
+## [Unreleased]
+
+### Added
+
+- "Large Screen Accessibility…" in the menu: a window with the screens on the left and, on the right, every resolution macOS reports for the selected screen (including those System Settings hides), with how big text looks in each (for example "text 133 %"). A resolution is applied at once; a panel asks "Keep these display settings?" and, without an answer within 10 seconds, the previous setting comes back. Uses only Apple's public display API, so it cannot create resolutions the screen and the Mac do not offer.
+
+- In the layout editor, hovering the line between two zones shows a ⇄ button near its top (or left) end: a click swaps the windows of the two zones. The rest of the line can still be dragged to resize.
+
+- Keep Awake: "Even With the Lid Closed", available with a time limit (not indefinitely). macOS only allows this through an administrator setting (`pmset disablesleep`), so Relay asks for the administrator password in macOS' own dialog, with a message explaining why, and starts a small script, passed inline, that turns sleep back on when the time is up, when the option is unticked, or when Relay quits. Opening and closing the lid again during that time keeps the mode on. If the Mac gets hot (macOS thermal state "serious" or worse), it goes to sleep at once. Ticking the option shows a warning (ventilation, heat, use at your own risk) and asks for confirmation each time.
+
+- Keep Awake: a battery limit, on Macs with a battery. In the "Prevent Sleep" list, "Or Until the Battery Reaches" offers No Battery Limit, 50 %, 30 %, 20 % or 10 % (the current charge is shown). On battery power, Relay stops preventing sleep, and turns off "Even With the Lid Closed", as soon as the charge falls to that level, or when the time is up, whichever comes first. The choice is kept between launches. The charge is read from macOS' public power information, with no permission or administrator password.
+
+### Changed
+
+- "Prevent Sleep" and "For…" are now one menu item. It opens a list: Indefinitely, the usual durations, "Custom Time…" (hours and minutes) and, once on, "Stop Preventing Sleep". The last two custom times are remembered and appear in the list, in order between the usual durations. While on, the item shows the time left (for example "Prevent Sleep (1 h 23 min left)").
+- "Move Pointer to the Chosen Window" puts the pointer in the middle of the window horizontally and 5% above its bottom edge, where the next action usually is, instead of its center.
+- When dragging a window, the drop area in the middle of each zone (dashed outline) is now a quarter of the zone's area instead of half, so a window is fitted to a zone only when you really aim for it.
+- Zones now have a minimum size in points (320 × 200) instead of 5 % of the screen, so they stay usable on a small screen such as a laptop's. This applies when splitting a zone, dragging a line in the layout editor, and resizing a window that sits in a zone. The minimum never goes above 45 % of the screen, and a zone that is already smaller can grow but not shrink.
+
 ## [1.1.0] - 2026-10-24
 
 ### Added

@@ -303,3 +303,16 @@ final class LayoutStore {
         try? encoder.encode(saved).write(to: url, options: .atomic)
     }
 }
+
+extension Zone {
+    /// Smallest zone, in points, so that a zone stays usable even on a small screen.
+    static let minWidth: CGFloat = 320, minHeight: CGFloat = 200
+
+    /// That minimum as a fraction of a screen of `size`, never more than 45 %
+    /// so that a screen can still be split in two.
+    static func minimum(vertical: Bool, screen size: CGSize) -> CGFloat {
+        let length: CGFloat = vertical ? size.width : size.height
+        guard length >= 100 else { return 0.05 }       // size unknown
+        return min(0.45, max(0.05, (vertical ? minWidth : minHeight) / length))
+    }
+}

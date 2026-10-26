@@ -4,6 +4,7 @@ import ServiceManagement
 /// Entry point: the menu-bar icon and its menu.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let keepAwake = KeepAwake()
+    private let closedLid = ClosedLid()
     private let switcher = Switcher()
     private let hotkey = Hotkey()
     private let activity = Activity()
@@ -25,7 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         set { UserDefaults.standard.set(newValue, forKey: "pointerFollows") }
     }
 
-    /// Puts the pointer at the center of the window, once it is in front.
+    /// Puts the pointer in the middle of the window horizontally, near its
+    /// bottom (5% from it), where the next action usually is, once the window
+    /// is in front.
     private func movePointer(to item: WindowItem) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             let frame: CGRect
@@ -36,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 frame = WindowList.frame(of: item.element)
             }
             guard frame.width > 0, frame.height > 0 else { return }
-            CGWarpMouseCursorPosition(CGPoint(x: frame.midX, y: frame.midY))
+            CGWarpMouseCursorPosition(CGPoint(x: frame.midX, y: frame.maxY - frame.height * 0.05))
         }
     }
 
@@ -51,9 +54,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         set { UserDefaults.standard.set(newValue, forKey: "recentMinutes") }
     }
 
+    /// Sleep is never left turned off behind Relay.
+    func applicationWillTerminate(_ notification: Notification) {
+        closedLid.deactivate()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        keepAwake.onChange = { [weak self] in self?.refresh() }
+        keepAwake.onChange = { [weak self] in
+            guard let self else { return }
+            // The lid option only goes with a time limit.
+            if !self.keepAwake.isActive || self.keepAwake.endDate == nil { self.closedLid.deactivate() }
+            self.refresh()
+        }
+        closedLid.onChange = { [weak self] in self?.refresh() }
         updates.onChange = { [weak self] in self?.refresh() }
         updates.schedule()
 
@@ -176,23 +190,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
         }
         menu.addItem(.sectionHeader(title: "Keep Awake"))
-        menu.addItem(item("Prevent Sleep", checked: keepAwake.isActive) { [weak self] in
-            guard let self else { return }
-            self.keepAwake.isActive ? self.keepAwake.deactivate() : self.keepAwake.activate(for: nil)
-        })
+        var title = "Prevent Sleep"
+        let battery = KeepAwake.battery()
+        if keepAwake.isActive {
+            var limits: [String] = []
+            if let end = keepAwake.endDate {
+                limits.append("\(Self.duration(max(0, Int(end.timeIntervalSinceNow / 60)))) left")
+            }
+            if battery != nil, let limit = keepAwake.batteryLimit { limits.append("until \(limit) % battery") }
+            title += " (" + (limits.isEmpty ? "indefinitely" : limits.joined(separator: ", or ")) + ")"
+        }
         let durations = NSMenu()
         durations.addItem(item("Indefinitely", checked: keepAwake.isActive && keepAwake.endDate == nil) { [weak self] in
             self?.keepAwake.activate(for: nil)
         })
-        for (title, minutes) in [("15 minutes", 15), ("1 hour", 60), ("2 hours", 120), ("5 hours", 300)] {
-            durations.addItem(item(title) { [weak self] in self?.keepAwake.activate(for: TimeInterval(minutes * 60)) })
+        // The usual durations and the last two custom ones, shortest first.
+        let presets: [Int] = [15, 60, 120, 300]
+        for minutes in Set(presets + customDurations).sorted() {
+            let custom = !presets.contains(minutes)
+            durations.addItem(item(Self.duration(minutes) + (custom ? " (custom)" : "")) { [weak self] in
+                self?.keepAwake.activate(for: TimeInterval(minutes * 60))
+            })
         }
-        let durationItem = NSMenuItem(title: "For…", action: nil, keyEquivalent: "")
-        durationItem.submenu = durations
-        menu.addItem(durationItem)
+        durations.addItem(item("Custom Time…") { [weak self] in
+            guard let self, let minutes = self.askDuration() else { return }
+            self.customDurations = Array(([minutes] + self.customDurations.filter { $0 != minutes }).prefix(2))
+            self.keepAwake.activate(for: TimeInterval(minutes * 60))
+        })
+        // Only on a Mac with a battery.
+        if let battery {
+            durations.addItem(.separator())
+            durations.addItem(info("Or Until the Battery Reaches (now \(battery.level) %)"))
+            durations.addItem(item("No Battery Limit", checked: keepAwake.batteryLimit == nil) { [weak self] in
+                self?.keepAwake.batteryLimit = nil
+            })
+            for level in [50, 30, 20, 10] {
+                durations.addItem(item("\(level) %", checked: keepAwake.batteryLimit == level) { [weak self] in
+                    self?.keepAwake.batteryLimit = level
+                })
+            }
+        }
+        if keepAwake.isActive {
+            durations.addItem(.separator())
+            durations.addItem(item("Stop Preventing Sleep") { [weak self] in self?.keepAwake.deactivate() })
+        }
+        let preventItem = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        preventItem.state = keepAwake.isActive ? .on : .off
+        preventItem.submenu = durations
+        menu.addItem(preventItem)
         if let end = keepAwake.endDate {
             menu.addItem(info("Until \(end.formatted(date: .omitted, time: .shortened))"))
         }
+        // Only with a time limit, never indefinitely.
+        if keepAwake.isActive, let end = keepAwake.endDate {
+            menu.addItem(item("Even With the Lid Closed", checked: closedLid.isActive) { [weak self] in
+                guard let self else { return }
+                if self.closedLid.isActive {
+                    self.closedLid.deactivate()
+                } else if self.confirmClosedLid() {
+                    self.closedLid.activate(until: end)
+                }
+            })
+        } else {
+            menu.addItem(info("Even With the Lid Closed (choose a duration first)"))
+        }
+        menu.addItem(info("The Mac sleeps anyway if it gets too hot"))
 
         menu.addItem(.separator())
         menu.addItem(.sectionHeader(title: "Window Switch"))
@@ -237,6 +299,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(.sectionHeader(title: "Productive Windows"))
         fillLayouts(menu)
+
+        menu.addItem(.separator())
+        menu.addItem(item("Large Screen Accessibility…") { DisplaySettings.open() })
 
         menu.addItem(.separator())
         let login = SMAppService.mainApp
@@ -385,6 +450,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let name = Layout.cleanName(field.stringValue)
         return name.isEmpty ? nil : name
+    }
+
+    /// The last two custom durations chosen, in minutes, most recent first.
+    private var customDurations: [Int] {
+        get { UserDefaults.standard.array(forKey: "customDurations") as? [Int] ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: "customDurations") }
+    }
+
+    /// "15 min", "1 hour", "2 hours", "1 h 30 min".
+    private static func duration(_ minutes: Int) -> String {
+        let hours = minutes / 60, rest = minutes % 60
+        if hours == 0 { return "\(rest) min" }
+        if rest == 0 { return hours == 1 ? "1 hour" : "\(hours) hours" }
+        return "\(hours) h \(rest) min"
+    }
+
+    /// Asks for a duration in hours and minutes. Returns minutes, or nil.
+    private func askDuration() -> Int? {
+        let alert = NSAlert()
+        alert.messageText = "Prevent sleep for how long?"
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        func field(_ x: CGFloat, _ value: String) -> NSTextField {
+            let field = NSTextField(frame: NSRect(x: x, y: 0, width: 50, height: 24))
+            let numbers = NumberFormatter()
+            numbers.allowsFloats = false
+            numbers.minimum = 0
+            numbers.maximum = 999
+            field.formatter = numbers
+            field.stringValue = value
+            box.addSubview(field)
+            return field
+        }
+        func label(_ x: CGFloat, _ text: String) {
+            let label = NSTextField(labelWithString: text)
+            label.frame = NSRect(x: x, y: 3, width: 70, height: 18)
+            box.addSubview(label)
+        }
+        let hours = field(0, "1")
+        label(56, "hours")
+        let minutes = field(130, "30")
+        label(186, "minutes")
+        alert.accessoryView = box
+        alert.addButton(withTitle: "Start")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
+        alert.window.initialFirstResponder = hours
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let total = min(hours.integerValue, 999) * 60 + min(minutes.integerValue, 999)
+        return total > 0 ? total : nil
+    }
+
+    /// Warning shown each time before keeping the Mac awake with its lid closed.
+    private func confirmClosedLid() -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Keep the Mac awake with the lid closed?"
+        alert.informativeText = """
+            A closed laptop cools down less well. While this mode is on:
+
+            • Leave the Mac on a hard, open surface: never in a bag, a sleeve or a closed drawer.
+            • Do not use it in direct sunlight, in a hot car or during a heat wave.
+
+            Relay puts the Mac to sleep when macOS reports that it is getting hot, but it cannot \
+            detect every situation. You use this mode at your own risk: Relay is provided without \
+            any warranty (GNU GPL v3).
+            """
+        // The safe choice is the default one.
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Keep Awake")
+        NSApp.activate()
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     private func confirm(_ title: String) -> Bool {

@@ -283,6 +283,10 @@ final class ZoneEditor: NSObject, NSWindowDelegate {
             view.screenSize = layout.screenSizes[id] ?? CGSize(width: 16, height: 10)
             view.onChange = { [weak self] in self?.activate(id) }
             view.onDrop = { [weak self] index, zone in self?.place(index, in: zone, on: id) }
+            view.onSwap = { [weak self] a, b in
+                (a.windows, b.windows) = (b.windows, a.windows)
+                self?.activate(id)
+            }
             view.onRemove = { [weak self] ref in
                 self?.unassign(ref)
                 self?.changed()
@@ -445,8 +449,9 @@ final class ZoneEditor: NSObject, NSWindowDelegate {
         func middle(_ rect: CGRect) -> CGFloat { vertical ? rect.midX : rect.midY }
         func low(_ rect: CGRect) -> CGFloat { vertical ? rect.minX : rect.minY }
         func high(_ rect: CGRect) -> CGFloat { vertical ? rect.maxX : rect.maxY }
+        let minimum: CGFloat = Zone.minimum(vertical: vertical, screen: canvas.screenSize)
         func crosses(_ rect: CGRect, _ line: CGFloat) -> Bool {
-            line > low(rect) + ZoneCanvas.minSize && line < high(rect) - ZoneCanvas.minSize
+            line > low(rect) + minimum && line < high(rect) - minimum
         }
         // Common line if the zones form a rectangle and it crosses at least one of them.
         var common: CGFloat? = ZoneCanvas.rectangle(of: selection).map { middle($0) }
@@ -559,7 +564,6 @@ final class ZoneEditor: NSObject, NSWindowDelegate {
 /// The drawing of one screen and its zones, with selection and movable lines.
 /// Zones are in fractions of the screen (0 to 1, origin at the top left).
 private final class ZoneCanvas: NSView {
-    static let minSize: CGFloat = 0.05      // minimum size of a zone, as a fraction of the screen
     private static let epsilon: CGFloat = 0.001
 
     var zones: [Zone] = []
@@ -573,7 +577,12 @@ private final class ZoneCanvas: NSView {
     /// Window names drawn in the zones, and the one under the pointer, which
     /// shows a ✕ to take it out of its zone.
     private var names: [(zone: Zone, ref: WindowRef, rect: CGRect)] = []
-    private var hoveredName: (zone: Zone, ref: WindowRef, rect: CGRect)? { didSet { needsDisplay = true } }           // zone under a window being dragged from the list
+    private var hoveredName: (zone: Zone, ref: WindowRef, rect: CGRect)? { didSet { needsDisplay = true } }
+    /// Two zones side by side swap their windows with the ⇄ button shown on
+    /// the line between them, near its top (or left) end so that the rest of
+    /// the line can still be dragged.
+    var onSwap: (_ a: Zone, _ b: Zone) -> Void = { _, _ in }
+    private var hoveredPair: (a: Zone, b: Zone, button: CGRect, vertical: Bool)? { didSet { needsDisplay = true } }
 
     /// Line being moved: its position, its direction, and the zones before it
     /// (right or bottom edge on the line) and after it.
@@ -647,6 +656,20 @@ private final class ZoneCanvas: NSView {
                 y += lineHeight
             }
         }
+        if let pair = hoveredPair,
+           let arrows = NSImage(systemSymbolName: pair.vertical ? "arrow.left.arrow.right" : "arrow.up.arrow.down",
+                                accessibilityDescription: "Swap windows") {
+            NSColor.controlAccentColor.setFill()
+            NSBezierPath(ovalIn: pair.button).fill()
+            let tinted = NSImage(size: arrows.size, flipped: false) { rect in
+                arrows.draw(in: rect)
+                NSColor.white.set()
+                rect.fill(using: .sourceAtop)
+                return true
+            }
+            tinted.draw(in: pair.button.insetBy(dx: 4, dy: 4), from: .zero, operation: .sourceOver, fraction: 1,
+                        respectFlipped: true, hints: nil)
+        }
         if let hoveredName, let cross = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Remove") {
             NSColor.labelColor.withAlphaComponent(0.12).setFill()
             NSBezierPath(roundedRect: hoveredName.rect.insetBy(dx: -3, dy: 0), xRadius: 4, yRadius: 4).fill()
@@ -666,15 +689,49 @@ private final class ZoneCanvas: NSView {
                                        owner: self, userInfo: nil))
     }
 
+    /// Each pair of zones that share a line, with where its ⇄ button goes.
+    private func pairs() -> [(a: Zone, b: Zone, button: CGRect, vertical: Bool, line: CGRect)] {
+        let screen = screenRect
+        let size: CGFloat = 22
+        var result: [(a: Zone, b: Zone, button: CGRect, vertical: Bool, line: CGRect)] = []
+        for a in zones {
+            for b in zones where a !== b {
+                let ra = a.frame(in: screen), rb = b.frame(in: screen)
+                if abs(ra.maxX - rb.minX) < 1 {
+                    // Side by side: button near the top of their common line.
+                    let top: CGFloat = max(ra.minY, rb.minY), bottom: CGFloat = min(ra.maxY, rb.maxY)
+                    guard bottom - top > 2 * size else { continue }
+                    result.append((a, b, CGRect(x: ra.maxX - size / 2, y: top + 8, width: size, height: size), true,
+                                   CGRect(x: ra.maxX - 14, y: top, width: 28, height: bottom - top)))
+                } else if abs(ra.maxY - rb.minY) < 1 {
+                    // One above the other: button near the left of their common line.
+                    let left: CGFloat = max(ra.minX, rb.minX), right: CGFloat = min(ra.maxX, rb.maxX)
+                    guard right - left > 2 * size else { continue }
+                    result.append((a, b, CGRect(x: left + 8, y: ra.maxY - size / 2, width: size, height: size), false,
+                                   CGRect(x: left, y: ra.maxY - 14, width: right - left, height: 28)))
+                }
+            }
+        }
+        return result
+    }
+
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // ⇄ button of the line under the pointer.
+        let pair = pairs().first { $0.line.contains(point) || $0.button.insetBy(dx: -4, dy: -4).contains(point) }
+        if pair?.a !== hoveredPair?.a || pair?.b !== hoveredPair?.b {
+            hoveredPair = pair.map { (a: $0.a, b: $0.b, button: $0.button, vertical: $0.vertical) }
+        }
         // Keep the ✕ while the pointer goes from the name to it.
         if let hoveredName, hoveredName.rect.union(crossRect(hoveredName.rect)).insetBy(dx: -2, dy: -2).contains(point) { return }
         let found = names.first { $0.rect.insetBy(dx: -2, dy: 0).contains(point) }
         if found?.ref != hoveredName?.ref || found?.zone !== hoveredName?.zone { hoveredName = found }
     }
 
-    override func mouseExited(with event: NSEvent) { hoveredName = nil }
+    override func mouseExited(with event: NSEvent) {
+        hoveredName = nil
+        hoveredPair = nil
+    }
 
     // MARK: - Dropping windows
 
@@ -718,6 +775,11 @@ private final class ZoneCanvas: NSView {
             onRemove(hoveredName.ref)
             return
         }
+        if let pair = hoveredPair, pair.button.insetBy(dx: -2, dy: -2).contains(point) {
+            onSwap(pair.a, pair.b)
+            needsDisplay = true
+            return
+        }
         if let line = lineUnder(point) {
             dragging = line
             return
@@ -738,14 +800,17 @@ private final class ZoneCanvas: NSView {
         let target = fraction(convert(event.locationInWindow, from: nil))
         let wanted = line.vertical ? target.x : target.y
         // Each zone keeps a minimum size on both sides of the line.
+        // A zone already smaller than the minimum may grow but not shrink.
+        let minimum: CGFloat = Zone.minimum(vertical: line.vertical, screen: screenSize)
+        func least(_ zone: Zone) -> CGFloat { min(minimum, line.vertical ? zone.rect.width : zone.rect.height) }
         var low: CGFloat = 0, high: CGFloat = 1
         for zone in line.before {
             let edge: CGFloat = line.vertical ? zone.rect.minX : zone.rect.minY
-            low = max(low, edge + Self.minSize)
+            low = max(low, edge + least(zone))
         }
         for zone in line.after {
             let edge: CGFloat = line.vertical ? zone.rect.maxX : zone.rect.maxY
-            high = min(high, edge - Self.minSize)
+            high = min(high, edge - least(zone))
         }
         guard low <= high else { return }
         let position = min(high, max(low, wanted))

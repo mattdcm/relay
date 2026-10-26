@@ -8,7 +8,6 @@ import AppKit
 final class ZoneResizer {
     /// How far (in points) an edge may be from a zone's edge and still match it.
     private static let tolerance: CGFloat = 12
-    private static let minSize: CGFloat = 0.05      // as a fraction of the screen
     private static let epsilon: CGFloat = 0.001
 
     static var isEnabled: Bool {
@@ -81,7 +80,7 @@ final class ZoneResizer {
                 : (edge.end ? zone.rect.maxY : zone.rect.minY)
             guard position > Self.epsilon, position < 1 - Self.epsilon else { continue }
             let wanted: CGFloat = (edge.new - origin) / length
-            if Self.moveLine(at: position, vertical: edge.vertical, from: zone, to: wanted, in: session.zones) { changed = true }
+            if Self.moveLine(at: position, vertical: edge.vertical, from: zone, to: wanted, in: session.zones, screen: screen.size) { changed = true }
         }
         return changed
     }
@@ -122,7 +121,7 @@ final class ZoneResizer {
 
     /// Moves the line at `position` that the zone touches, with every zone
     /// along it that is joined to the zone. Returns false if it could not move.
-    private static func moveLine(at position: CGFloat, vertical: Bool, from zone: Zone, to wanted: CGFloat, in zones: [Zone]) -> Bool {
+    private static func moveLine(at position: CGFloat, vertical: Bool, from zone: Zone, to wanted: CGFloat, in zones: [Zone], screen: CGSize) -> Bool {
         func start(_ z: Zone) -> CGFloat { vertical ? z.rect.minX : z.rect.minY }
         func end(_ z: Zone) -> CGFloat { vertical ? z.rect.maxX : z.rect.maxY }
         func low(_ z: Zone) -> CGFloat { vertical ? z.rect.minY : z.rect.minX }
@@ -145,9 +144,12 @@ final class ZoneResizer {
         let before: [Zone] = group.filter { abs(end($0) - position) < epsilon }
         let after: [Zone] = group.filter { abs(start($0) - position) < epsilon }
         guard !before.isEmpty, !after.isEmpty else { return false }
+        // A zone already smaller than the minimum may grow but not shrink.
+        let minimum: CGFloat = Zone.minimum(vertical: vertical, screen: screen)
+        func least(_ z: Zone) -> CGFloat { min(minimum, end(z) - start(z)) }
         var lowest: CGFloat = 0, highest: CGFloat = 1
-        for z in before { lowest = max(lowest, start(z) + minSize) }
-        for z in after { highest = min(highest, end(z) - minSize) }
+        for z in before { lowest = max(lowest, start(z) + least(z)) }
+        for z in after { highest = min(highest, end(z) - least(z)) }
         guard lowest <= highest else { return false }
         let new: CGFloat = min(highest, max(lowest, wanted))
         guard abs(new - position) > epsilon else { return false }
