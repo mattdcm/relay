@@ -61,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        WindowList.startTracking()
         keepAwake.onChange = { [weak self] in
             guard let self else { return }
             // The lid option only goes with a time limit.

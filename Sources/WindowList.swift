@@ -18,9 +18,43 @@ struct WindowItem {
 /// Accessibility API. No screen image is read here.
 enum WindowList {
 
+    /// Window numbers in the order you used them, most recent first. Bringing an
+    /// app to the front raises all its windows, so the stacking order alone would
+    /// put the app's other windows before the window you came from.
+    private static var recent: [CGWindowID] = []
+    private static var activationObserver: NSObjectProtocol?
+
+    /// Records a window as the one used most recently.
+    private static func touch(_ id: CGWindowID) {
+        recent.removeAll { $0 == id }
+        recent.insert(id, at: 0)
+        if recent.count > 300 { recent.removeLast() }
+    }
+
+    /// The front window of an app, in the stacking order.
+    private static func touchFront(of pid: pid_t) {
+        if let front = windows(onScreenOnly: true).first(where: { $0.pid == pid }) { touch(front.id) }
+    }
+
+    /// Follows the apps you bring to the front, however you do it (click, Dock…).
+    static func startTracking() {
+        guard activationObserver == nil else { return }
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier { touchFront(of: pid) }
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            // Once the app has raised its windows, its front one is the one in use.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { WindowList.touchFront(of: app.processIdentifier) }
+        }
+    }
+
     /// Windows of all applications, from most recent to oldest.
     static func current() -> [WindowItem] {
         let order = windows(onScreenOnly: true)   // stacking order, visible only
+        // The window in front is the one in use, even if you reached it with a
+        // click inside the same app.
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+           let front = order.first(where: { $0.pid == pid }) { touch(front.id) }
         let all = windows(onScreenOnly: false)    // including minimized and hidden
         var used = Set<CGWindowID>()
         var result: [(rank: Int, item: WindowItem)] = []
@@ -61,13 +95,16 @@ enum WindowList {
                                   isMinimized: window.isMiniaturized, own: window)
             result.append((rank ?? Int.max, item))
         }
+        // Windows you used first, from most recent; then the others, front to back.
+        func lastUse(_ item: WindowItem) -> Int { item.windowID.flatMap { recent.firstIndex(of: $0) } ?? Int.max }
         return result
-            .sorted { ($0.rank, $0.item.app.localizedName ?? "") < ($1.rank, $1.item.app.localizedName ?? "") }
+            .sorted { (lastUse($0.item), $0.rank, $0.item.app.localizedName ?? "") < (lastUse($1.item), $1.rank, $1.item.app.localizedName ?? "") }
             .map(\.item)
     }
 
     /// Brings the window to the front.
     static func focus(_ item: WindowItem) {
+        if let id = item.windowID { touch(id) }
         if let window = item.own {
             NSApp.activate()
             if window.isMiniaturized { window.deminiaturize(nil) }

@@ -4,6 +4,12 @@ All notable changes to Relay are listed here. Versions follow [Semantic Versioni
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-26
+
+### Fixed
+
+- ⌘⇥ now lists windows in the order you used them. Before, after switching to an app with several windows, the next suggestion was that app's other window instead of the window you came from, because macOS raises all the windows of an app when it comes to the front.
+
 ## [1.2.0] - 2026-10-26
 
 ### Added
@@ -108,6 +114,7 @@ First public version.
 - **Screen content.** Only `Sources/Previews.swift` reads the screen, only when previews are on. Thumbnails stay in memory and are never written to disk or sent anywhere.
 - **No usage history.** When apps were last used is kept in memory only and forgotten when Relay quits.
 
+[1.2.1]: https://github.com/mattdcm/relay/releases/tag/v1.2.1
 [1.2.0]: https://github.com/mattdcm/relay/releases/tag/v1.2.0
 [1.1.0]: https://github.com/mattdcm/relay/releases/tag/v1.1.0
 [1.0.0]: https://github.com/mattdcm/relay/releases/tag/v1.0.0
