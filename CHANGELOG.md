@@ -4,6 +4,8 @@ All notable changes to Relay are listed here. Versions follow [Semantic Versioni
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-26
+
 ### Added
 
 - "Large Screen Accessibility…" in the menu: a window with the screens on the left and, on the right, every resolution macOS reports for the selected screen (including those System Settings hides), with how big text looks in each (for example "text 133 %"). A resolution is applied at once; a panel asks "Keep these display settings?" and, without an answer within 10 seconds, the previous setting comes back. Uses only Apple's public display API, so it cannot create resolutions the screen and the Mac do not offer.
@@ -106,5 +108,6 @@ First public version.
 - **Screen content.** Only `Sources/Previews.swift` reads the screen, only when previews are on. Thumbnails stay in memory and are never written to disk or sent anywhere.
 - **No usage history.** When apps were last used is kept in memory only and forgotten when Relay quits.
 
+[1.2.0]: https://github.com/mattdcm/relay/releases/tag/v1.2.0
 [1.1.0]: https://github.com/mattdcm/relay/releases/tag/v1.1.0
 [1.0.0]: https://github.com/mattdcm/relay/releases/tag/v1.0.0
