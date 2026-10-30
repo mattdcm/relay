@@ -2,6 +2,7 @@
 # Compiles Relay, installs it in /Applications and launches it.
 # Only Apple's "Command Line Tools" are needed (xcode-select --install).
 set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
 cd "$(dirname "$0")"
 
 APP=build/Relay.app
@@ -56,8 +57,14 @@ TEXT
     # Locks itself after 5 minutes and on sleep.
     security set-keychain-settings -l -u -t 300 "$KEYCHAIN"
     # codesign only finds a key in a keychain on the search list.
+    # One path per line, so paths with spaces stay whole.
+    OLDIFS=$IFS
+    IFS='
+'
     # shellcheck disable=SC2046
-    security list-keychains -d user -s $(security list-keychains -d user | tr -d '"') "$KEYCHAIN"
+    set -- $(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//')
+    IFS=$OLDIFS
+    security list-keychains -d user -s "$@" "$KEYCHAIN"
 fi
 
 echo ""
@@ -70,6 +77,9 @@ trap 'security lock-keychain "$KEYCHAIN" 2>/dev/null || true' EXIT
 if ! security find-certificate -c "$CERT" "$KEYCHAIN" >/dev/null 2>&1; then
     echo "Creating the \"$CERT\" certificate…"
     TMP=$(mktemp -d)
+    chmod 700 "$TMP"
+    # Random password for the key while it passes through files.
+    P12PASS=$(openssl rand -hex 16)
     cat > "$TMP/cert.cfg" <<EOF
 [req]
 distinguished_name = dn
@@ -81,12 +91,12 @@ basicConstraints = critical, CA:false
 keyUsage = critical, digitalSignature
 extendedKeyUsage = critical, codeSigning
 EOF
-    /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+    /usr/bin/openssl req -x509 -newkey rsa:2048 -passout pass:"$P12PASS" -days 3650 \
         -config "$TMP/cert.cfg" -extensions ext \
         -keyout "$TMP/key.pem" -out "$TMP/cert.pem" 2>/dev/null
-    /usr/bin/openssl pkcs12 -export -name "$CERT" -passout pass:relais \
+    /usr/bin/openssl pkcs12 -export -name "$CERT" -passin pass:"$P12PASS" -passout pass:"$P12PASS" \
         -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -out "$TMP/cert.p12"
-    security import "$TMP/cert.p12" -P relais -T /usr/bin/codesign -k "$KEYCHAIN"
+    security import "$TMP/cert.p12" -P "$P12PASS" -T /usr/bin/codesign -k "$KEYCHAIN"
     rm -rf "$TMP"
     # Keeps codesign from showing a confirmation window at each signature.
     echo ""

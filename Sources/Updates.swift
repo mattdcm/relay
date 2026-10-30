@@ -19,6 +19,21 @@ final class Updates {
     /// Latest published version, if it is newer than this one.
     private(set) var available: (version: String, tag: String, page: URL)?
 
+    /// The menu-bar dot only announces a version until you next open the menu:
+    /// installing it is up to you, and the dot does not come back for it.
+    var showsDot: Bool { available.map { $0.version != seenVersion } ?? false }
+
+    /// Called when the menu opens.
+    func markSeen() {
+        guard let available, available.version != seenVersion else { return }
+        seenVersion = available.version
+    }
+
+    private var seenVersion: String? {
+        get { UserDefaults.standard.string(forKey: "seenUpdate") }
+        set { UserDefaults.standard.set(newValue, forKey: "seenUpdate") }
+    }
+
     private let interval: TimeInterval = 7 * 24 * 3600
     private var timer: Timer?
 
@@ -98,13 +113,17 @@ final class Updates {
             #!/bin/sh
             # Opened by Relay's "Install Update" menu item.
             set -eu
+            PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
             clear
             echo "Updating Relay to \(update.version)."
             echo "Downloading the source from github.com/\(Self.repository)…"
             DEST="\(folder)"
             rm -rf "$DEST"
             mkdir -p "$DEST"
-            curl -fsSL "\(archive)" | tar -xz -C "$DEST" --strip-components 1
+            # Downloaded to a file first, so a failed download stops here.
+            curl -fsSL -o "$DEST.tar.gz" "\(archive)"
+            tar -xzf "$DEST.tar.gz" -C "$DEST" --strip-components 1
+            rm -f "$DEST.tar.gz"
             echo "Source saved in $DEST"
             cd "$DEST"
             sh build.sh
@@ -112,10 +131,17 @@ final class Updates {
             echo "Relay \(update.version) is installed. You can close this window."
 
             """
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Relay Update.command")
+        // A new folder only Relay's user can open, and a file private from
+        // the start: no other program can swap the script before it runs.
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Relay Update \(UUID().uuidString)")
+        let url = dir.appendingPathComponent("Relay Update.command")
         do {
-            try script.write(to: url, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false,
+                                                    attributes: [.posixPermissions: 0o700])
+            guard FileManager.default.createFile(atPath: url.path, contents: Data(script.utf8),
+                                                 attributes: [.posixPermissions: 0o700]) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
             NSWorkspace.shared.open(url)
         } catch {
             NSWorkspace.shared.open(update.page)

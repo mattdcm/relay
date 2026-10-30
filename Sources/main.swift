@@ -18,12 +18,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var permissionTimer: Timer?
 
-    /// Previews are off by default: without them, no Screen Recording
-    /// permission is requested.
-    /// Off by default: after a switch, the pointer goes to the chosen window.
-    private var pointerFollows: Bool {
-        get { UserDefaults.standard.bool(forKey: "pointerFollows") }
-        set { UserDefaults.standard.set(newValue, forKey: "pointerFollows") }
+    /// When the pointer goes to the chosen window after a switch.
+    enum PointerRule: String, CaseIterable {
+        case never, always, otherScreen, severalScreens, screen27, screen32, screen40
+
+        var title: String {
+            switch self {
+            case .never: return "Never"
+            case .always: return "Always"
+            case .otherScreen: return "When the Window Is on Another Screen"
+            case .severalScreens: return "When Several Screens Are Connected"
+            case .screen27: return "When a Screen Is 27\" or Larger"
+            case .screen32: return "When a Screen Is 32\" or Larger"
+            case .screen40: return "When a Screen Is 40\" or Larger"
+            }
+        }
+
+        /// Shown in the menu item that opens the choices.
+        var shortTitle: String {
+            switch self {
+            case .never: return "Never"
+            case .always: return "Always"
+            case .otherScreen: return "Other Screen"
+            case .severalScreens: return "Several Screens"
+            case .screen27: return "27\" Screen"
+            case .screen32: return "32\" Screen"
+            case .screen40: return "40\" Screen"
+            }
+        }
+
+        var minimumInches: Double? {
+            switch self {
+            case .screen27: return 27
+            case .screen32: return 32
+            case .screen40: return 40
+            default: return nil
+            }
+        }
+    }
+
+    /// Never by default. Older versions only had on/off ("pointerFollows").
+    private var pointerRule: PointerRule {
+        get {
+            let defaults = UserDefaults.standard
+            if let raw = defaults.string(forKey: "pointerRule"), let rule = PointerRule(rawValue: raw) { return rule }
+            return defaults.bool(forKey: "pointerFollows") ? .always : .never
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "pointerRule") }
+    }
+
+    private func pointerShouldMove(to frame: CGRect) -> Bool {
+        switch pointerRule {
+        case .never: return false
+        case .always: return true
+        case .severalScreens: return NSScreen.screens.count > 1
+        case .otherScreen:
+            guard let pointer = CGEvent(source: nil)?.location else { return true }
+            return Self.display(at: pointer) != Self.display(at: CGPoint(x: frame.midX, y: frame.midY))
+        case .screen27, .screen32, .screen40:
+            // Half an inch of margin: a 27" screen often reports 26.9".
+            let minimum = pointerRule.minimumInches ?? 0
+            return Self.screenDiagonals().contains { $0 + 0.5 >= minimum }
+        }
+    }
+
+    /// The screen under a point (origin at the top left).
+    private static func display(at point: CGPoint) -> CGDirectDisplayID? {
+        var display: CGDirectDisplayID = 0
+        var count: UInt32 = 0
+        guard CGGetDisplaysWithPoint(point, 1, &display, &count) == .success, count > 0 else { return nil }
+        return display
+    }
+
+    /// Diagonal of each connected screen in inches, from the physical size the
+    /// screen reports (0 when it reports nothing, as some projectors do).
+    private static func screenDiagonals() -> [Double] {
+        NSScreen.screens.compactMap { screen in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+            else { return nil }
+            let size = CGDisplayScreenSize(number)
+            return Double(hypot(size.width, size.height)) / 25.4
+        }
     }
 
     /// Puts the pointer in the middle of the window horizontally, near its
@@ -38,11 +113,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } else {
                 frame = WindowList.frame(of: item.element)
             }
-            guard frame.width > 0, frame.height > 0 else { return }
+            guard frame.width > 0, frame.height > 0, self.pointerShouldMove(to: frame) else { return }
             CGWarpMouseCursorPosition(CGPoint(x: frame.midX, y: frame.maxY - frame.height * 0.05))
         }
     }
 
+    /// Previews are off by default: without them, no Screen Recording
+    /// permission is requested.
     private var previewsEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "previews") }
         set { UserDefaults.standard.set(newValue, forKey: "previews") }
@@ -91,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkey.onRelease = { [weak self] in
             guard let self else { return }
             let chosen = self.switcher.selectedItem
-            defer { if self.pointerFollows, let chosen { self.movePointer(to: chosen) } }
+            defer { if self.pointerRule != .never, let chosen { self.movePointer(to: chosen) } }
             if self.zoneMover.isActive {
                 // The window is already in its zone and in front.
                 self.zoneMover.commit()
@@ -167,30 +244,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Updates the icon and rebuilds the menu.
     private func refresh() {
-        let symbol = keepAwake.isActive ? "cup.and.saucer.fill" : "cup.and.saucer"
-        let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: "Relay")
-        statusItem.button?.image = updates.available == nil ? icon : icon.map { withDot($0) }
+        updateIcon()
         let menu = NSMenu()
         menu.delegate = self
         fill(menu)
         statusItem.menu = menu
     }
 
+    private func updateIcon() {
+        let symbol = keepAwake.isActive ? "cup.and.saucer.fill" : "cup.and.saucer"
+        let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: "Relay")
+        statusItem.button?.image = updates.showsDot ? icon.map { withDot($0) } : icon
+    }
+
     /// Called by macOS just before opening the menu: it always reflects the
-    /// current state of permissions.
+    /// current state of permissions. Opening it also clears the update dot.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         fill(menu)
+        if updates.showsDot {
+            updates.markSeen()
+            updateIcon()
+        }
     }
 
     private func fill(_ menu: NSMenu) {
         if let update = updates.available {
-            menu.addItem(info("Relay \(update.version) is available"))
-            menu.addItem(item("Install Update…") { [weak self] in self?.updates.install() })
-            menu.addItem(item("What's New…") { NSWorkspace.shared.open(update.page) })
+            // Optional: a single line, the update is never forced.
+            menu.addItem(item("Install Version \(update.version) (Available)…") { [weak self] in self?.updates.install() })
             menu.addItem(.separator())
         }
-        menu.addItem(.sectionHeader(title: "Keep Awake"))
+        menu.addItem(header("Keep Awake", symbol: "cup.and.saucer"))
         var title = "Prevent Sleep"
         let battery = KeepAwake.battery()
         if keepAwake.isActive {
@@ -258,7 +342,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(info("The Mac sleeps anyway if it gets too hot"))
 
         menu.addItem(.separator())
-        menu.addItem(.sectionHeader(title: "Window Switch"))
+        menu.addItem(header("Window Switch", symbol: "command"))
         if AXIsProcessTrusted() {
             menu.addItem(info("Switch windows: ⌘⇥"))
             menu.addItem(info("Move it to a zone: ⌘⇥, then arrows (⌘ held)"))
@@ -280,9 +364,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let recentItem = NSMenuItem(title: "Recent apps for ⌘⇥: \(current)", action: nil, keyEquivalent: "")
         recentItem.submenu = recents
         menu.addItem(recentItem)
-        menu.addItem(item("Move Pointer to the Chosen Window", checked: pointerFollows) { [weak self] in
-            self?.pointerFollows.toggle()
-        })
+        let pointerRules = NSMenu()
+        for rule in PointerRule.allCases {
+            if rule == .otherScreen || rule == .screen27 { pointerRules.addItem(.separator()) }
+            pointerRules.addItem(item(rule.title, checked: rule == pointerRule) { [weak self] in
+                self?.pointerRule = rule
+            })
+        }
+        let sizes = Self.screenDiagonals().map { $0 > 0 ? "\(Int($0.rounded()))\"" : "size unknown" }
+        pointerRules.addItem(.separator())
+        pointerRules.addItem(info("Your screens: " + sizes.joined(separator: ", ")))
+        let pointerItem = NSMenuItem(title: "Move Pointer to the Chosen Window: \(pointerRule.shortTitle)",
+                                     action: nil, keyEquivalent: "")
+        pointerItem.submenu = pointerRules
+        menu.addItem(pointerItem)
         menu.addItem(item("Show Window Previews", checked: previewsEnabled) { [weak self] in
             guard let self else { return }
             self.previewsEnabled.toggle()
@@ -298,7 +393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(info("If previews fail: untick, tick again, then relaunch"))
         }
         menu.addItem(.separator())
-        menu.addItem(.sectionHeader(title: "Productive Windows"))
+        menu.addItem(header("Productive Windows", symbol: "square.split.2x2"))
         fillLayouts(menu)
 
         menu.addItem(.separator())
@@ -331,6 +426,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         support.state = .on
         menu.addItem(support)
         menu.addItem(item("Quit Relay") { NSApp.terminate(nil) })
+
+        // The items of each section are indented under its title, up to the
+        // next separator.
+        var inSection = false
+        for menuItem in menu.items {
+            if menuItem.isSeparatorItem {
+                inSection = false
+            } else if menuItem.identifier == Self.headerID {
+                inSection = true
+            } else if inSection {
+                menuItem.indentationLevel = 1
+            }
+        }
     }
 
     // MARK: - Layouts
@@ -564,6 +672,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func item(_ title: String, checked: Bool = false, action: @escaping () -> Void) -> NSMenuItem {
         let menuItem = ClosureMenuItem(title: title, action: action)
         menuItem.state = checked ? .on : .off
+        return menuItem
+    }
+
+    private static let headerID = NSUserInterfaceItemIdentifier("sectionHeader")
+
+    /// Section title: bold, in the normal text colour, with an icon, so it
+    /// stands out more than the small grey macOS section headers.
+    private func header(_ title: String, symbol: String) -> NSMenuItem {
+        let menuItem = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        menuItem.isEnabled = false
+        menuItem.identifier = Self.headerID
+        let font = NSFontManager.shared.convert(NSFont.menuFont(ofSize: 0), toHaveTrait: .boldFontMask)
+        let icon = NSImageView(frame: NSRect(x: 14, y: 4, width: 18, height: 16))
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .semibold)
+        icon.contentTintColor = .controlAccentColor
+        let label = NSTextField(labelWithString: title)
+        label.font = font
+        label.textColor = .labelColor
+        label.sizeToFit()
+        label.setFrameOrigin(NSPoint(x: 38, y: (24 - label.frame.height) / 2))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: label.frame.maxX + 14, height: 24))
+        view.addSubview(icon)
+        view.addSubview(label)
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.staticText)
+        view.setAccessibilityLabel(title)
+        menuItem.view = view
         return menuItem
     }
 

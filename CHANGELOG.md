@@ -4,6 +4,21 @@ All notable changes to Relay are listed here. Versions follow [Semantic Versioni
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-30
+
+### Changed
+
+- "Move Pointer to the Chosen Window" is now a choice instead of on/off: Never (default), Always, When the Window Is on Another Screen, When Several Screens Are Connected, or When a Screen Is 27", 32" or 40" or Larger. Screen sizes come from the physical size each screen reports; the submenu shows what Relay detected. If the option was on, it becomes Always.
+- Menu section titles (Keep Awake, Window Switch, Productive Windows) are bold, in the normal text colour, with an icon, and the items under each title are indented.
+- Updates are clearly optional: the menu shows a single line, "Install Version X.Y.Z (Available)…", instead of a notice plus "Install Update…" and "What's New…". The red dot on the menu-bar cup now disappears as soon as you open the menu, even if you do not install, and does not come back for that version (it comes back for a newer one).
+
+### Security
+
+- "Even With the Lid Closed": the administrator script turns sleep back on even if it is stopped, stops if Relay's process number is reused by another program, and uses only full paths to system tools.
+- Relay now talks to that script with empty marker files that are never read, in a folder only your user can open.
+- "Install Version…": the update script is written to a new private folder, uses a fixed `PATH`, and stops if the download fails.
+- `build.sh`: fixed `PATH`; the signing key is never written unencrypted while it is created, and its temporary password is random; keychain paths with spaces are kept whole.
+
 ## [1.2.1] - 2026-10-26
 
 ### Fixed
@@ -114,6 +129,7 @@ First public version.
 - **Screen content.** Only `Sources/Previews.swift` reads the screen, only when previews are on. Thumbnails stay in memory and are never written to disk or sent anywhere.
 - **No usage history.** When apps were last used is kept in memory only and forgotten when Relay quits.
 
+[1.3.0]: https://github.com/mattdcm/relay/releases/tag/v1.3.0
 [1.2.1]: https://github.com/mattdcm/relay/releases/tag/v1.2.1
 [1.2.0]: https://github.com/mattdcm/relay/releases/tag/v1.2.0
 [1.1.0]: https://github.com/mattdcm/relay/releases/tag/v1.1.0

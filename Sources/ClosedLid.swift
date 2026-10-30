@@ -12,8 +12,11 @@ import AppKit
 /// If the Mac gets hot (macOS thermal state "serious" or worse), Relay asks
 /// the script to turn sleep back on and put the Mac to sleep at once.
 /// The script is fixed text, passed inline (never stored in a file another
-/// program could change); it only receives numbers and the path of the file
-/// Relay uses to talk to it, whose content it only compares with fixed words.
+/// program could change); it only receives numbers and the path of the
+/// folder Relay uses to talk to it. Relay talks by creating empty files in
+/// that folder ("lid-wake", "lid-sleep"): the script only checks whether they
+/// exist and never reads a file. It also turns sleep back on if it is killed,
+/// and stops if Relay's process number now belongs to another program.
 final class ClosedLid {
     private(set) var isActive = false
     var onChange: () -> Void = {}
@@ -21,9 +24,14 @@ final class ClosedLid {
     private var timer: Timer?
     private var thermalObserver: NSObjectProtocol?
 
-    /// File Relay writes to talk to the script: "wake" or "sleep".
-    private let control: URL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Relay/lid-control")
+    /// Folder where Relay creates the files that talk to the script.
+    private let folder: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Relay")
+
+    /// Empty file whose existence is the message: "wake" or "sleep".
+    private func marker(_ word: String) -> URL {
+        folder.appendingPathComponent("lid-" + word)
+    }
 
     /// Turns sleep off until `end`. Returns false if the password was not given.
     @discardableResult
@@ -31,11 +39,16 @@ final class ClosedLid {
         guard !isActive else { return true }
         let seconds = Int(end.timeIntervalSinceNow)
         guard seconds > 0 else { return false }
-        try? FileManager.default.createDirectory(at: control.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(at: control)
+        // Only Relay's user may create files there (0700 when created).
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        // Leftovers from an earlier run, and the file older versions used.
+        for name in ["lid-wake", "lid-sleep", "lid-control"] {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+        }
 
         let command = "/bin/sh -c " + Self.quote(Self.script) + " relay-lid \(seconds) "
-            + Self.quote(control.path) + " \(getpid()) >/dev/null 2>&1 &"
+            + Self.quote(folder.path) + " \(getpid()) >/dev/null 2>&1 &"
         let source = "do shell script \"" + command.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"") + "\" with prompt \"" + Self.prompt + "\" with administrator privileges"
         var error: NSDictionary?
@@ -68,7 +81,7 @@ final class ClosedLid {
     }
 
     private func send(_ word: String) {
-        try? word.write(to: control, atomically: true, encoding: .utf8)
+        FileManager.default.createFile(atPath: marker(word).path, contents: Data())
     }
 
     private func check() {
@@ -91,20 +104,24 @@ final class ClosedLid {
     private static let prompt = "Relay needs your administrator password to keep the Mac awake with the lid closed. "
         + "It turns off sleep (pmset disablesleep) until the time you chose is up, then turns it back on."
 
-    /// Run as administrator. $1: seconds, $2: control file, $3: Relay's process.
+    /// Run as administrator. $1: seconds, $2: folder of the marker files,
+    /// $3: Relay's process.
     private static let script = """
-        end=$(( $(date +%s) + $1 )); ctl="$2"; pid="$3"
-        pmset -a disablesleep 1
+        trap '/usr/bin/pmset -a disablesleep 0' EXIT
+        trap 'exit 0' HUP INT TERM
+        end=$(( $(/bin/date +%s) + $1 )); dir="$2"; pid="$3"
+        /usr/bin/pmset -a disablesleep 1
         while :; do
-          sleep 3
-          [ "$(date +%s)" -ge "$end" ] && break
+          /bin/sleep 3
+          [ "$(/bin/date +%s)" -ge "$end" ] && break
           kill -0 "$pid" 2>/dev/null || break
-          if [ -f "$ctl" ]; then
-            word=$(head -c 8 "$ctl"); rm -f "$ctl"
-            if [ "$word" = "sleep" ]; then pmset -a disablesleep 0; pmset sleepnow; exit 0; fi
-            break
+          case "$(/bin/ps -o comm= -p "$pid" 2>/dev/null)" in */Relay) ;; *) break ;; esac
+          if [ -e "$dir/lid-sleep" ]; then
+            /bin/rm -f "$dir/lid-sleep" "$dir/lid-wake"
+            /usr/bin/pmset -a disablesleep 0; /usr/bin/pmset sleepnow; exit 0
           fi
+          if [ -e "$dir/lid-wake" ]; then /bin/rm -f "$dir/lid-wake"; break; fi
         done
-        pmset -a disablesleep 0
+        /usr/bin/pmset -a disablesleep 0
         """
 }

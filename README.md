@@ -31,10 +31,11 @@ If you lose the password, delete `~/Library/Keychains/relay-signing.keychain-db`
 
 ## Updates
 
-Once a week, Relay asks the GitHub API for the latest release of this project. When it is newer than the running version, a small red dot appears on the menu-bar cup, and the menu shows:
+Once a week, Relay asks the GitHub API for the latest release of this project. When it is newer than the running version, a small red dot appears on the menu-bar cup until you next open the menu (it does not come back for that version), and the menu shows one optional line:
 
-- **Install Update…** opens a script in Terminal that downloads the source of that version from GitHub (into `~/Library/Application Support/Relay/Source/`) and runs `sh build.sh`. You type your keychain password, and Relay is replaced and relaunched with your permissions and layouts intact.
-- **What's New…** opens the release page.
+- **Install Version X.Y.Z (Available)…** opens a script in Terminal that downloads the source of that version from GitHub (into `~/Library/Application Support/Relay/Source/`) and runs `sh build.sh`. You type your keychain password, and Relay is replaced and relaunched with your permissions and layouts intact.
+
+Updating is never required: ignore the line and Relay keeps working as it is. The release notes are on the project's Releases page on GitHub.
 
 Relay itself never downloads or installs anything in the background: everything happens in the Terminal window, in front of you. You can also update by hand: get the new source (`git pull` or the release archive) and run `sh build.sh`. Untick "Check for Updates Weekly" in the menu to turn the check off.
 
